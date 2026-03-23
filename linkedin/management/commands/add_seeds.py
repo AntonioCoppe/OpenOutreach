@@ -12,10 +12,20 @@ class Command(BaseCommand):
             type=int,
             help="Campaign ID to add seeds to.",
         )
+        parser.add_argument(
+            "--csv",
+            action="store_true",
+            help="Read CSV with Profile URL, First Name, Last Name, Company columns.",
+        )
 
     def handle(self, *args, **options):
         from linkedin.models import Campaign
-        from linkedin.setup.seeds import create_seed_leads, parse_seed_urls
+        from linkedin.setup.seeds import (
+            create_seed_leads,
+            create_seed_leads_from_csv,
+            parse_csv_leads,
+            parse_seed_urls,
+        )
 
         campaign = Campaign.objects.filter(pk=options["campaign_id"]).first()
         if not campaign:
@@ -23,16 +33,36 @@ class Command(BaseCommand):
             sys.exit(1)
 
         if sys.stdin.isatty():
-            self.stdout.write(
-                "Paste LinkedIn profile URLs (one per line).\n"
-                "Press Ctrl-D when done:\n"
-            )
+            if options["csv"]:
+                self.stdout.write(
+                    "Paste CSV data (with header row).\n"
+                    "Press Ctrl-D when done:\n"
+                )
+            else:
+                self.stdout.write(
+                    "Paste LinkedIn profile URLs (one per line).\n"
+                    "Press Ctrl-D when done:\n"
+                )
 
         text = sys.stdin.read()
-        public_ids = parse_seed_urls(text)
-        if not public_ids:
-            self.stderr.write("No valid LinkedIn URLs found.")
-            return
 
-        created = create_seed_leads(campaign, public_ids)
-        self.stdout.write(self.style.SUCCESS(f"{created} seed profile(s) added as QUALIFIED."))
+        if options["csv"]:
+            try:
+                leads = parse_csv_leads(text)
+            except ValueError as e:
+                self.stderr.write(str(e))
+                sys.exit(1)
+            if not leads:
+                self.stderr.write("No valid LinkedIn URLs found in CSV.")
+                return
+            created = create_seed_leads_from_csv(campaign, leads)
+            self.stdout.write(self.style.SUCCESS(
+                f"{created} seed(s) added as QUALIFIED from {len(leads)} CSV rows."
+            ))
+        else:
+            public_ids = parse_seed_urls(text)
+            if not public_ids:
+                self.stderr.write("No valid LinkedIn URLs found.")
+                return
+            created = create_seed_leads(campaign, public_ids)
+            self.stdout.write(self.style.SUCCESS(f"{created} seed profile(s) added as QUALIFIED."))

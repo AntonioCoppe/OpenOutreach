@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI  # OpenAI-compatible client (works with any provider)
 
-from linkedin.conf import AI_MODEL, LLM_API_KEY, LLM_API_BASE, PROMPTS_DIR
+from linkedin.conf import AI_MODEL, LLM_API_KEY, LLM_API_BASE, FOLLOW_UP_MEDIA_PATH, PROMPTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +40,29 @@ def _build_tools(session, public_id: str, profile: dict, campaign_id: int):
     @tool
     def send_message(message: str) -> str:
         """Send a short LinkedIn message to the lead. Keep it human — 1-3 sentences max."""
-        from linkedin.actions.message import send_raw_message
+        from linkedin.actions.message import send_raw_message, _send_message_via_api
 
-        if not send_raw_message(session, profile, message):
+        # When media is configured, use the Voyager API path directly
+        if FOLLOW_UP_MEDIA_PATH:
+            try:
+                from linkedin.api.client import PlaywrightLinkedinAPI
+                from linkedin.api.messaging.media import upload_media
+
+                api = PlaywrightLinkedinAPI(session=session)
+                attachment = upload_media(api, FOLLOW_UP_MEDIA_PATH, session.handle)
+                sent = _send_message_via_api(session, profile, message, file_attachments=[attachment])
+            except Exception as e:
+                logger.warning("Media send failed (%s), falling back to text-only: %s", public_id, e)
+                sent = send_raw_message(session, profile, message)
+        else:
+            sent = send_raw_message(session, profile, message)
+
+        if not sent:
             return "Failed to send message."
+
+        from linkedin.db.chat import save_chat_message
+        if FOLLOW_UP_MEDIA_PATH:
+            save_chat_message(session, public_id, message)
 
         return "Message sent."
 

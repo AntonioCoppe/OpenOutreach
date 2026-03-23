@@ -25,6 +25,7 @@ def send_message(
         conversation_urn: str,
         message_text: str,
         mailbox_urn: Optional[str] = None,
+        file_attachments: Optional[list[dict]] = None,
 ) -> dict:
     """Send a message via Voyager Messaging API.
 
@@ -43,13 +44,18 @@ def send_message(
     origin_token = str(uuid.uuid4())
     tracking_id = os.urandom(16).hex()
 
+    render_content = []
+    if file_attachments:
+        for att in file_attachments:
+            render_content.append({"file": att})
+
     payload = {
         "message": {
             "body": {
                 "attributes": [],
                 "text": message_text,
             },
-            "renderContentUnions": [],
+            "renderContentUnions": render_content,
             "conversationUrn": conversation_urn,
             "originToken": origin_token,
         },

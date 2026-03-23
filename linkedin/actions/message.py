@@ -125,7 +125,12 @@ def _send_message(session: "AccountSession", profile: Dict[str, Any], message: s
         return False
 
 
-def _send_message_via_api(session: "AccountSession", profile: Dict[str, Any], message: str) -> bool:
+def _send_message_via_api(
+    session: "AccountSession",
+    profile: Dict[str, Any],
+    message: str,
+    file_attachments: list[dict] | None = None,
+) -> bool:
     """Last-resort fallback: send via Voyager Messaging API."""
     from linkedin.api.client import PlaywrightLinkedinAPI
     from linkedin.api.messaging import send_message
@@ -149,8 +154,8 @@ def _send_message_via_api(session: "AccountSession", profile: Dict[str, Any], me
         return False
 
     try:
-        send_message(api, conversation_urn, message)
-        logger.info("Message sent to %s (API fallback)", public_identifier)
+        send_message(api, conversation_urn, message, file_attachments=file_attachments)
+        logger.info("Message sent to %s (API%s)", public_identifier, " + media" if file_attachments else "")
         return True
     except Exception as e:
         logger.error("API send failed for %s → %s", public_identifier, e)
