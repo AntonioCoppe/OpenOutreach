@@ -92,6 +92,32 @@ class PlaywrightLinkedinAPI:
         h = {**self.headers, **(headers or {})}
         return self._fetch("POST", url, h, body=data)
 
+    def put_binary(self, url: str, data_b64: str, *,
+                   mime_type: str, headers: dict | None = None) -> _FetchResponse:
+        """PUT binary data (base64-encoded) via fetch() inside the browser.
+
+        Decodes base64 to ArrayBuffer in JS to avoid Playwright serialization issues.
+        """
+        h = {**(headers or {}), "Content-Type": mime_type}
+        raw = self.page.evaluate(
+            """([url, headers, b64, timeoutMs]) => {
+                const binary = atob(b64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), timeoutMs);
+                return fetch(url, {
+                    method: "PUT", headers, credentials: "include",
+                    body: bytes.buffer, signal: controller.signal
+                }).then(async r => {
+                    clearTimeout(timer);
+                    return {status: r.status, ok: r.ok, body: await r.text()};
+                });
+            }""",
+            [url, h, data_b64, VOYAGER_REQUEST_TIMEOUT_MS],
+        )
+        return _FetchResponse(raw)
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=30),

@@ -13,7 +13,7 @@ from typing import Callable
 from django.utils import timezone
 from termcolor import colored
 
-from linkedin.conf import CAMPAIGN_CONFIG
+from linkedin.conf import CAMPAIGN_CONFIG, CONNECTION_NOTE_PERSONALIZED, CONNECTION_NOTE_FALLBACK
 from linkedin.db.deals import increment_connect_attempts, set_profile_state
 from linkedin.db.leads import disqualify_lead
 from linkedin.models import ActionLog, Task
@@ -23,6 +23,21 @@ from linkedin.exceptions import ReachedConnectionLimit, SkipProfile
 logger = logging.getLogger(__name__)
 
 MAX_CONNECT_ATTEMPTS = 3
+
+
+def build_connection_note(lead_id: int | None) -> str:
+    """Build a personalized connection note from Lead data."""
+    if not lead_id:
+        return CONNECTION_NOTE_FALLBACK
+
+    from crm.models import Lead
+
+    lead = Lead.objects.filter(pk=lead_id).first()
+    first_name = lead.first_name.strip() if lead and lead.first_name else ""
+
+    if first_name:
+        return CONNECTION_NOTE_PERSONALIZED.format(first_name=first_name)
+    return CONNECTION_NOTE_FALLBACK
 
 
 @dataclass
@@ -140,7 +155,8 @@ def handle_connect(task, session, qualifiers):
             _reschedule()
             return
 
-        new_state = send_connection_request(session=session, profile=profile)
+        note = build_connection_note(candidate.get("lead_id"))
+        new_state = send_connection_request(session=session, profile=profile, note=note)
 
         if new_state == ProfileState.QUALIFIED:
             # No Connect button found — track attempt, disqualify after MAX_CONNECT_ATTEMPTS

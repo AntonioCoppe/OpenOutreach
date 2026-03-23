@@ -15,30 +15,38 @@ SELECTORS = {
     "more_button": 'button[id*="overflow"]:visible, button[aria-label*="More actions"]:visible',
     "connect_option": 'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"]',
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
+    "add_note": 'button:has-text("Add a note")',
+    "note_textarea": 'textarea[name="message"], textarea#custom-message, textarea[id*="custom-message"]',
+    "send_invitation": 'button[aria-label*="Send invitation"], button:has-text("Send invitation"), button:has-text("Send")',
 }
 
 
 def send_connection_request(
         session: "AccountSession",
         profile: Dict[str, Any],
+        note: str = "",
 ) -> ProfileState:
     """
-    Sends a LinkedIn connection request WITHOUT a note (fastest & safest).
+    Sends a LinkedIn connection request, optionally with a note.
 
     Assumes the profile page is already loaded (caller navigates via
     ``get_connection_status`` or ``search_profile`` beforehand).
     """
     public_identifier = profile.get('public_identifier')
 
-    # Send invitation WITHOUT note (current active flow)
     if not _connect_direct(session) and not _connect_via_more(session):
         logger.debug("Connect button not found for %s — staying at current stage", public_identifier)
         return ProfileState.QUALIFIED
 
-    _click_without_note(session)
+    if note:
+        if not _click_with_note(session, note):
+            _click_without_note(session)
+    else:
+        _click_without_note(session)
+
     _check_weekly_invitation_limit(session)
 
-    logger.debug("Connection request submitted for %s", public_identifier)
+    logger.debug("Connection request submitted for %s%s", public_identifier, " (with note)" if note else "")
     return ProfileState.PENDING
 
 
@@ -86,6 +94,33 @@ def _connect_via_more(session):
     return True
 
 
+def _click_with_note(session, note_text: str) -> bool:
+    """Click 'Add a note', type the note, and send. Returns True on success."""
+    session.wait()
+
+    add_note_btn = session.page.locator(SELECTORS["add_note"])
+    if add_note_btn.count() == 0:
+        logger.debug("'Add a note' button not found — falling back to no-note")
+        return False
+
+    add_note_btn.first.click()
+    session.wait()
+
+    textarea = session.page.locator(SELECTORS["note_textarea"])
+    if textarea.count() == 0:
+        logger.debug("Note textarea not found — falling back to no-note")
+        return False
+
+    textarea.first.fill(note_text)
+    session.wait()
+
+    send_btn = session.page.locator(SELECTORS["send_invitation"])
+    send_btn.first.click(force=True)
+    session.wait()
+    logger.debug("Connection request submitted (with note)")
+    return True
+
+
 def _click_without_note(session):
     """Click flow: sends connection request instantly without note."""
     session.wait()
@@ -118,6 +153,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Send a LinkedIn connection request")
     parser.add_argument("--handle", default=None, help="LinkedIn handle (default: first active profile)")
     parser.add_argument("--profile", required=True, help="Public identifier of the target profile")
+    parser.add_argument("--note", default="", help="Optional connection note text")
     args = parser.parse_args()
 
     handle = args.handle or get_first_active_profile_handle()
@@ -140,5 +176,5 @@ if __name__ == "__main__":
     if connection_status in (ProfileState.CONNECTED, ProfileState.PENDING):
         print(f"Skipping – already {connection_status.value}")
     else:
-        status = send_connection_request(session=session, profile=test_profile)
+        status = send_connection_request(session=session, profile=test_profile, note=args.note)
         print(f"Finished → Status: {status.value}")

@@ -58,6 +58,29 @@ REST_DAYS = (5, 6)      # 0=Mon … 6=Sun; default Sat+Sun off
 # ----------------------------------------------------------------------
 # Campaign config (timing + ML defaults — hardcoded, no YAML)
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Connection note templates (sent with connection requests)
+# ----------------------------------------------------------------------
+CONNECTION_NOTE_PERSONALIZED = (
+    "Hi {first_name}, after 100+ engineering interviews I got tired of "
+    "high-volume resumes inflating costs and burning out teams.\n\n"
+    "Built a pre-screening system that filters thousands into a targeted "
+    "shortlist, this cuts cost per hire and scales your TA capacity.\n\n"
+    "Want the quick demo?"
+)
+
+CONNECTION_NOTE_FALLBACK = (
+    "Hi, after 100+ engineering interviews I got tired of slow screening "
+    "dragging out time to hire.\n\n"
+    "Built a pre-screening system that filters thousands on actual "
+    "engineering ability, this accelerates your pipeline without "
+    "sacrificing quality.\n\n"
+    "Want the quick demo?"
+)
+
+# Path to GIF/image to attach to follow-up messages (empty = disabled)
+FOLLOW_UP_MEDIA_PATH = os.getenv("FOLLOW_UP_MEDIA_PATH", "")
+
 CAMPAIGN_CONFIG = {
     "check_pending_recheck_after_hours": 24,
     "enrich_min_interval": 1,
