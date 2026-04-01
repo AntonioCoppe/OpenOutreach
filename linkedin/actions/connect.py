@@ -12,8 +12,16 @@ SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
     "invite_to_connect": 'button[aria-label*="Invite"][aria-label*="to connect"]:visible, button[aria-label*="Connect with"]:visible',
     "error_toast": 'div[data-test-artdeco-toast-item-type="error"]',
-    "more_button": 'button[id*="overflow"]:visible, button[aria-label*="More actions"]:visible',
-    "connect_option": 'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], div[role="button"][aria-label*="Connect with"]',
+    "more_button": 'button[id*="overflow"]:visible, button[aria-label*="More actions"]:visible, button[aria-label="More"]:visible',
+    "connect_option": (
+        'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], '
+        'div[role="button"][aria-label*="Connect with"], '
+        'div[role="listbox"] span:text-is("Connect"), '
+        'ul[role="list"] span:text-is("Connect"), '
+        'li span:text-is("Connect"), '
+        'div.artdeco-dropdown__content span:text-is("Connect"), '
+        '[role="menuitem"]:has-text("Connect")'
+    ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "add_note": 'button:has-text("Add a note")',
     "note_textarea": 'textarea[name="message"], textarea#custom-message, textarea[id*="custom-message"]',
