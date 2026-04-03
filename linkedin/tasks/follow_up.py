@@ -56,7 +56,7 @@ def _handle_post_accept_video_flow(session, public_id: str, profile: dict, campa
 
     from linkedin.actions.conversations import get_conversation
     from linkedin.db.deals import set_profile_state
-    from linkedin.db.urls import public_id_to_url
+    from linkedin.url_utils import public_id_to_url
     from linkedin.tasks.connect import build_connection_note, enqueue_follow_up
 
     deal = (
@@ -119,7 +119,10 @@ def _handle_post_accept_video_flow(session, public_id: str, profile: dict, campa
 
 
 def handle_follow_up(task, session, qualifiers):
+    from linkedin.actions.message import send_raw_message
     from linkedin.agents.follow_up import run_follow_up_agent
+    from linkedin.db.deals import set_profile_state
+    from linkedin.enums import ProfileState
     from linkedin.tasks.connect import _seconds_until_tomorrow, enqueue_follow_up
 
     payload = task.payload
@@ -156,21 +159,22 @@ def handle_follow_up(task, session, qualifiers):
         )
         return
 
-    result = run_follow_up_agent(session, public_id, profile, campaign_id)
+    decision = run_follow_up_agent(session, public_id, profile)
 
-    # Record action if any message was sent
-    sent_messages = [a for a in result["actions"] if a["tool"] == "send_message"]
-    if sent_messages:
+    if decision.action == "send_message":
+        logger.info("[%s] follow_up message for %s: %s", session.campaign, public_id, decision.message)
+        sent = send_raw_message(session, profile, decision.message)
+        if not sent:
+            set_profile_state(session, public_id, ProfileState.QUALIFIED.value)
+            logger.warning("follow_up for %s: send failed — moving to QUALIFIED for re-connection", public_id)
+            return
         session.linkedin_profile.record_action(
             ActionLog.ActionType.FOLLOW_UP, session.campaign,
         )
+        enqueue_follow_up(campaign_id, public_id, delay_seconds=decision.follow_up_hours * 3600)
 
-    # Safety net: if agent didn't schedule or complete, re-enqueue
-    terminal_tools = {"mark_completed", "schedule_follow_up"}
-    if not any(a["tool"] in terminal_tools for a in result["actions"]):
-        logger.warning("follow_up agent for %s did not schedule or complete — re-enqueuing in 72h", public_id)
-        enqueue_follow_up(campaign_id, public_id, delay_seconds=72 * 3600)
+    elif decision.action == "mark_completed":
+        set_profile_state(session, public_id, ProfileState.COMPLETED.value, reason=decision.reason)
 
-    # Log summary
-    action_names = [a["tool"] for a in result["actions"]]
-    logger.info("follow_up agent for %s: %s", public_id, ", ".join(action_names) or "no actions")
+    elif decision.action == "wait":
+        enqueue_follow_up(campaign_id, public_id, delay_seconds=decision.follow_up_hours * 3600)

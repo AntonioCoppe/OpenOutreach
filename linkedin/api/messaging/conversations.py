@@ -5,7 +5,7 @@ import logging
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from linkedin.api.client import PlaywrightLinkedinAPI
-from linkedin.api.messaging.utils import get_self_urn, encode_urn, check_response
+from linkedin.api.messaging.utils import encode_urn, check_response
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,8 @@ def _graphql_headers(api: PlaywrightLinkedinAPI) -> dict:
     retry=retry_if_exception_type(IOError),
     reraise=True,
 )
-def fetch_conversations(api: PlaywrightLinkedinAPI) -> dict:
+def fetch_conversations(api: PlaywrightLinkedinAPI, mailbox_urn: str) -> dict:
     """Fetch recent conversations list. Returns raw API response."""
-    mailbox_urn = get_self_urn(api)
     url = (
         f"{_GRAPHQL_BASE}"
         f"?queryId={_CONVERSATIONS_QUERY_ID}"
@@ -58,39 +57,21 @@ def fetch_messages(api: PlaywrightLinkedinAPI, conversation_urn: str) -> dict:
 
 
 if __name__ == "__main__":
-    import os
-    import argparse
     import json
+    from linkedin.browser.registry import cli_parser, cli_session
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
-
-    import django
-    django.setup()
-
-    from linkedin.conf import get_first_active_profile_handle
-    from linkedin.browser.registry import get_or_create_session
-
-    logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
-
-    parser = argparse.ArgumentParser(description="Fetch raw Voyager messaging data")
-    parser.add_argument("--handle", default=None)
+    parser = cli_parser("Fetch raw Voyager messaging data")
     parser.add_argument("--conversations", action="store_true", help="List recent conversations")
     parser.add_argument("--messages", default=None, metavar="CONVERSATION_URN", help="Fetch messages for a conversation URN")
     args = parser.parse_args()
-
-    handle = args.handle or get_first_active_profile_handle()
-    if not handle:
-        print("No active LinkedInProfile found.")
-        raise SystemExit(1)
-
-    session = get_or_create_session(handle=handle)
-    session.campaign = session.campaigns.first()
+    session = cli_session(args)
     session.ensure_browser()
 
     api = PlaywrightLinkedinAPI(session=session)
 
     if args.conversations:
-        raw = fetch_conversations(api)
+        mailbox_urn = session.self_profile["urn"]
+        raw = fetch_conversations(api, mailbox_urn)
         elements = raw.get("data", {}).get("messengerConversationsBySyncToken", {}).get("elements", [])
         print(f"Got {len(elements)} conversations:\n")
         for conv in elements:

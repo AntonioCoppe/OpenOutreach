@@ -2,94 +2,73 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+_sessions: dict[int, "AccountSession"] = {}
 
-class AccountSessionRegistry:
+
+def get_or_create_session(linkedin_profile) -> "AccountSession":
+    from linkedin.browser.session import AccountSession
+
+    pk = linkedin_profile.pk
+    if pk not in _sessions:
+        _sessions[pk] = AccountSession(linkedin_profile)
+        logger.debug("Created new account session for %s", linkedin_profile)
+    return _sessions[pk]
+
+
+def get_first_active_profile():
+    """Return the first active LinkedInProfile, or None."""
+    from linkedin.models import LinkedInProfile
+
+    return LinkedInProfile.objects.filter(active=True).select_related("user").first()
+
+
+def resolve_profile(username: str | None = None):
+    """Resolve a LinkedInProfile from an optional username, falling back to first active."""
+    if username:
+        from linkedin.models import LinkedInProfile
+
+        return LinkedInProfile.objects.select_related("user").filter(
+            user__username=username,
+        ).first()
+    return get_first_active_profile()
+
+
+def cli_parser(description: str):
+    """Bootstrap Django and return an ArgumentParser with ``--handle``.
+
+    Call from ``if __name__ == "__main__"`` blocks. Sets up Django,
+    configures logging, and returns a parser with ``--handle`` pre-added.
+    After adding extra arguments, call ``cli_session(args)`` to get the session.
     """
-    Singleton-like registry where each LinkedIn handle has exactly ONE AccountSession.
-    Ignores campaign_name and csv_hash — only handle matters.
-    """
-    _instances: dict[str, "AccountSession"] = {}
+    import argparse
+    import os
 
-    @classmethod
-    def get_or_create(cls, handle: str) -> "AccountSession":
-        """
-        Main method - get or create session for given handle.
-        Handle is normalized (lowercase + strip) to avoid duplicates.
-        """
-        from linkedin.browser.session import AccountSession
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
 
-        normalized = cls._normalize_handle(handle)
+    import django
+    django.setup()
 
-        if normalized not in cls._instances:
-            session = AccountSession(handle=normalized)
-            cls._instances[normalized] = session
-            logger.debug("Created new account session for handle → %s", normalized)
-        else:
-            logger.debug("Reusing existing account session for handle → %s", normalized)
+    logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-        return cls._instances[normalized]
-
-    @classmethod
-    def get(cls, handle: str) -> Optional["AccountSession"]:
-        """Just get existing session or None"""
-        normalized = cls._normalize_handle(handle)
-        return cls._instances.get(normalized)
-
-    @classmethod
-    def exists(cls, handle: str) -> bool:
-        return cls._normalize_handle(handle) in cls._instances
-
-    @classmethod
-    def close_all(cls):
-        """Close all open sessions (useful on application shutdown)"""
-        for handle, session in list(cls._instances.items()):
-            try:
-                session.close()
-                logger.info("Closed session for handle → %s", handle)
-            except Exception as e:
-                logger.warning("Error while closing session %s: %s", handle, e)
-        cls._instances.clear()
-
-    @staticmethod
-    def _normalize_handle(handle: str) -> str:
-        """Standardize handle format → case insensitive & clean"""
-        if not handle:
-            raise ValueError("Handle cannot be empty")
-        return handle.strip().lower()
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--handle", default=None, help="Django username (default: first active profile)")
+    return parser
 
 
-def get_or_create_session(handle: str) -> "AccountSession":
-    return AccountSessionRegistry.get_or_create(handle)
+def cli_session(args) -> "AccountSession":
+    """Resolve profile from parsed args, create session, set default campaign."""
+    linkedin_profile = resolve_profile(args.handle)
+    if not linkedin_profile:
+        print("No active LinkedInProfile found.")
+        raise SystemExit(1)
 
-
-# For convenience in scripts/tests
-if __name__ == "__main__":
-    import sys
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)-8s │ %(message)s",
-    )
-
-    if len(sys.argv) != 2:
-        print("Usage: python -m linkedin.browser.registry <handle>")
-        sys.exit(1)
-
-    handle = sys.argv[1]
-
-    session = get_or_create_session(handle)
-
-    print("\nSession ready!")
-    print(f"   Handle   : {session.handle}")
-    print("   → Same handle = same session instance (always)")
-
-    try:
-        session.ensure_browser()
-        session.page.pause()  # keep browser open for manual testing
-    except KeyboardInterrupt:
-        print("\nClosing session...")
-        session.close()
+    session = get_or_create_session(linkedin_profile)
+    if not session.campaigns:
+        print(f"No campaigns found for {linkedin_profile}.")
+        raise SystemExit(1)
+    session.campaign = session.campaigns[0]
+    return session

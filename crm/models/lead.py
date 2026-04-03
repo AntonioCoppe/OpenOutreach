@@ -1,7 +1,11 @@
+import logging
+
 import numpy as np
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+
+logger = logging.getLogger(__name__)
 
 
 class Lead(models.Model):
@@ -12,9 +16,9 @@ class Lead(models.Model):
     first_name = models.CharField(max_length=100, blank=True, default="")
     last_name = models.CharField(max_length=100, blank=True, default="")
     company_name = models.CharField(max_length=200, blank=True, default="")
-    linkedin_url = models.URLField(max_length=200, blank=True, default="", unique=True)
-    public_identifier = models.CharField(max_length=200, blank=True, default="")
-    description = models.TextField(blank=True, default="")
+    linkedin_url = models.URLField(max_length=200, unique=True)
+    public_identifier = models.CharField(max_length=200, unique=True)
+    profile_data = models.JSONField(null=True, blank=True, default=None)
     embedding = models.BinaryField(null=True, blank=True)
     disqualified = models.BooleanField(default=False)
     creation_date = models.DateTimeField(default=timezone.now)
@@ -34,6 +38,81 @@ class Lead(models.Model):
         if self.disqualified:
             name = f"({_('Disqualified')}) {name}"
         return name
+
+    # ------------------------------------------------------------------
+    # Lazy accessors — fetch / compute on first access, cache in DB
+    # ------------------------------------------------------------------
+
+    def get_profile(self, session) -> dict | None:
+        """Parsed profile dict. Fetches from Voyager API if not yet enriched."""
+        if self.profile_data is None:
+            from linkedin.api.client import PlaywrightLinkedinAPI
+
+            session.ensure_browser()
+            api = PlaywrightLinkedinAPI(session=session)
+            profile, _raw = api.get_profile(public_identifier=self.public_identifier)
+            if not profile:
+                return None
+
+            self.first_name = profile.get("first_name", "") or ""
+            self.last_name = profile.get("last_name", "") or ""
+            positions = profile.get("positions", [])
+            if positions:
+                self.company_name = positions[0].get("company_name", "") or ""
+            self.profile_data = profile
+            self.save(update_fields=["first_name", "last_name", "company_name", "profile_data"])
+
+        return self.profile_data
+
+    def refresh_profile(self, session, profile_dict: dict | None = None) -> dict | None:
+        """Force re-fetch profile from Voyager API (invalidates cache).
+
+        If profile_dict is passed, updates it in place with the fresh data.
+        """
+        self.profile_data = None
+        self.save(update_fields=["profile_data"])
+        fresh = self.get_profile(session)
+        if fresh and profile_dict is not None:
+            profile_dict.update(fresh)
+        return fresh
+
+    def get_urn(self, session) -> str:
+        """LinkedIn URN. Chains through get_profile; re-fetches if missing."""
+        profile = self.get_profile(session)
+        if not profile or "urn" not in profile:
+            self.profile_data = None
+            self.save(update_fields=["profile_data"])
+            profile = self.get_profile(session)
+        if not profile or "urn" not in profile:
+            raise ValueError(f"Lead {self.pk}: could not resolve URN after re-fetch")
+        return profile["urn"]
+
+    def get_embedding(self, session) -> np.ndarray | None:
+        """384-dim embedding. Chains through get_profile → embed."""
+        if self.embedding is None:
+            profile = self.get_profile(session)
+            if profile:
+                from linkedin.ml.embeddings import embed_text
+                from linkedin.ml.profile_text import build_profile_text
+
+                text = build_profile_text({"profile": profile})
+                emb = embed_text(text)
+                self.embedding = emb.tobytes()
+                self.save(update_fields=["embedding"])
+        return self.embedding_array
+
+    def to_profile_dict(self) -> dict:
+        """Standard profile dict shape used by qualifiers and pools.
+
+        Reads existing data only — does not trigger enrichment.
+        """
+        return {
+            "lead_id": self.pk,
+            "public_identifier": self.public_identifier,
+            "url": self.linkedin_url or "",
+            "profile": self.profile_data or {},
+            "meta": {},
+        }
 
     @property
     def embedding_array(self) -> np.ndarray | None:

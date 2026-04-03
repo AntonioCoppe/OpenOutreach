@@ -62,12 +62,14 @@ That's it. No spreadsheets, no lead databases, no scraping setup.
 Pre-built images are published to GitHub Container Registry on every push to `master`.
 
 ```bash
-docker run --pull always -it -p 5900:5900 -v openoutreach_db:/app ghcr.io/eracle/openoutreach:latest
+docker run --pull always -it -p 5900:5900 -p 6080:6080 -v openoutreach_db:/app ghcr.io/eracle/openoutreach:latest
+
+# Open http://localhost:6080/vnc.html in your browser to watch the automation live
 ```
 
 The interactive onboarding walks you through the three inputs above on first run. All data persists in the `openoutreach_db` Docker volume across restarts.
 
-Connect a VNC client to `localhost:5900` to watch the browser live.
+Once the container is running, open **http://localhost:6080/vnc.html** in your browser to watch the browser live (noVNC). Alternatively, connect a native VNC client to `localhost:5900`.
 
 For Docker Compose, build-from-source, and more options see the **[Docker Guide](./docs/docker.md)**.
 
@@ -256,6 +258,14 @@ By using this software you accept the [Legal Notice](LEGAL_NOTICE.md). It covers
 ---
 
 <div align="center">
+
+<a href="https://star-history.com/#eracle/OpenOutreach&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=eracle/OpenOutreach&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=eracle/OpenOutreach&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=eracle/OpenOutreach&type=Date" width="400" />
+ </picture>
+</a>
 
 **Made with ❤️**
 

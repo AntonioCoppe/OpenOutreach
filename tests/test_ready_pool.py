@@ -28,7 +28,7 @@ def _make_qualified(session, public_id="alice"):
 @pytest.mark.django_db
 class TestPromoteToReady:
     @pytest.fixture(autouse=True)
-    def _db(self, embeddings_db):
+    def _db(self, db):
         pass
 
     def test_promotes_above_threshold(self, fake_session):
@@ -38,7 +38,7 @@ class TestPromoteToReady:
         scorer = BayesianQualifier(seed=42)
 
         with patch(
-            "linkedin.pipeline.ready_pool.load_embedding",
+            "crm.models.lead.Lead.get_embedding",
             return_value=np.ones(384),
         ), patch.object(
             scorer, "predict_probs", return_value=np.array([0.95, 0.80]),
@@ -59,7 +59,7 @@ class TestPromoteToReady:
         scorer = BayesianQualifier(seed=42)
 
         with patch(
-            "linkedin.pipeline.ready_pool.load_embedding",
+            "crm.models.lead.Lead.get_embedding",
             return_value=np.ones(384),
         ), patch.object(
             scorer, "predict_probs", return_value=None,
@@ -74,7 +74,7 @@ class TestPromoteToReady:
 @pytest.mark.django_db
 class TestGetReadyCandidate:
     @pytest.fixture(autouse=True)
-    def _db(self, embeddings_db):
+    def _db(self, db):
         pass
 
     def test_returns_none_when_empty(self, fake_session):

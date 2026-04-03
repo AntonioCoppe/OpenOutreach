@@ -4,12 +4,10 @@ import json
 import logging
 import os
 import uuid
-from typing import Optional
-
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from linkedin.api.client import PlaywrightLinkedinAPI
-from linkedin.api.messaging.utils import get_self_urn, check_response
+from linkedin.api.messaging.utils import check_response
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +22,8 @@ def send_message(
         api: PlaywrightLinkedinAPI,
         conversation_urn: str,
         message_text: str,
-        mailbox_urn: Optional[str] = None,
-        file_attachments: Optional[list[dict]] = None,
+        mailbox_urn: str,
+        file_attachments: list[dict] | None = None,
 ) -> dict:
     """Send a message via Voyager Messaging API.
 
@@ -33,13 +31,12 @@ def send_message(
         api: Authenticated PlaywrightLinkedinAPI instance.
         conversation_urn: e.g. "urn:li:msg_conversation:(urn:li:fsd_profile:XXX,2-threadId)"
         message_text: The message body.
-        mailbox_urn: Sender's profile URN. Auto-discovered from /in/me/ if omitted.
+        mailbox_urn: Sender's profile URN.
+        file_attachments: Optional list of already-uploaded attachment payloads.
 
     Returns:
         API response dict with delivery confirmation.
     """
-    if not mailbox_urn:
-        mailbox_urn = get_self_urn(api)
 
     origin_token = str(uuid.uuid4())
     tracking_id = os.urandom(16).hex()
@@ -85,47 +82,28 @@ def send_message(
 
 
 if __name__ == "__main__":
-    import os
-    import argparse
-
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
-
-    import django
-    django.setup()
-
-    from linkedin.conf import get_first_active_profile_handle
-    from linkedin.browser.registry import get_or_create_session
-    from linkedin.db.leads import resolve_urn
+    from crm.models import Lead
+    from linkedin.browser.registry import cli_parser, cli_session
     from linkedin.actions.conversations import find_conversation_urn, find_conversation_urn_via_navigation
 
-    logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
-
-    parser = argparse.ArgumentParser(description="Send a message via Voyager Messaging API")
-    parser.add_argument("--handle", default=None)
+    parser = cli_parser("Send a message via Voyager Messaging API")
     parser.add_argument("--profile", required=True, help="Public identifier of target profile")
     parser.add_argument("--text", required=True, help="Message text to send")
     args = parser.parse_args()
-
-    handle = args.handle or get_first_active_profile_handle()
-    if not handle:
-        print("No active LinkedInProfile found.")
-        raise SystemExit(1)
-
-    session = get_or_create_session(handle=handle)
-    session.campaign = session.campaigns.first()
+    session = cli_session(args)
     session.ensure_browser()
 
     api = PlaywrightLinkedinAPI(session=session)
 
     # Resolve target profile URN
-    target_urn = resolve_urn(args.profile, session=session)
-    if not target_urn:
-        print(f"Could not resolve URN for {args.profile}")
-        raise SystemExit(1)
+    lead = Lead.objects.get(public_identifier=args.profile)
+    target_urn = lead.get_urn(session)
     print(f"Resolved URN: {target_urn}")
 
     # Find conversation URN
-    conversation_urn = find_conversation_urn(api, target_urn)
+    mailbox_urn = session.self_profile["urn"]
+
+    conversation_urn = find_conversation_urn(api, target_urn, mailbox_urn)
     if not conversation_urn:
         print("Not in recent conversations, trying navigation fallback...")
         conversation_urn = find_conversation_urn_via_navigation(session, target_urn)
@@ -136,6 +114,6 @@ if __name__ == "__main__":
 
     # Send message via API
     print(f"Sending message to {args.profile}: {args.text}")
-    result = send_message(api, conversation_urn, args.text)
+    result = send_message(api, conversation_urn, args.text, mailbox_urn)
     delivered_at = result.get("value", {}).get("deliveredAt")
     print(f"Message sent successfully! (deliveredAt: {delivered_at})")

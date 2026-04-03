@@ -154,7 +154,7 @@ def handle_connect(task, session, qualifiers):
     if strategy.pre_connect:
         strategy.pre_connect(session, public_id)
 
-    from linkedin.db.urls import public_id_to_url
+    from linkedin.url_utils import public_id_to_url
     from crm.models import Deal
 
     deal = Deal.objects.filter(
@@ -277,12 +277,10 @@ def enqueue_check_pending(
     campaign_id: int,
     public_id: str,
     backoff_hours: float,
-    jitter_factor: float | None = None,
 ):
-    if jitter_factor is None:
-        jitter_factor = CAMPAIGN_CONFIG["check_pending_jitter_factor"]
-
-    delay_hours = backoff_hours * random.uniform(1.0, 1.0 + jitter_factor)
+    # Equal-jitter backoff: uniform spread across [half, backoff]
+    half = backoff_hours / 2
+    delay_hours = half + random.uniform(0, half)
 
     _enqueue_task(
         task_type=Task.TaskType.CHECK_PENDING,
@@ -294,6 +292,7 @@ def enqueue_check_pending(
         delay_seconds=delay_hours * 3600,
         dedup_keys=["campaign_id", "public_id"],
     )
+    return delay_hours
 
 
 def enqueue_follow_up(campaign_id: int, public_id: str, delay_seconds: float = 10):

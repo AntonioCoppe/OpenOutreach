@@ -1,7 +1,7 @@
 # linkedin/actions/conversations.py
 """Retrieve past LinkedIn conversations for a given profile."""
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from linkedin.api.client import PlaywrightLinkedinAPI
 from linkedin.api.messaging import fetch_conversations, fetch_messages, encode_urn
@@ -9,9 +9,9 @@ from linkedin.api.messaging import fetch_conversations, fetch_messages, encode_u
 logger = logging.getLogger(__name__)
 
 
-def find_conversation_urn(api: PlaywrightLinkedinAPI, target_urn: str) -> str | None:
+def find_conversation_urn(api: PlaywrightLinkedinAPI, target_urn: str, mailbox_urn: str) -> str | None:
     """Find conversation URN for a target profile URN by scanning recent conversations."""
-    raw = fetch_conversations(api)
+    raw = fetch_conversations(api, mailbox_urn)
     elements = raw.get("data", {}).get("messengerConversationsBySyncToken", {}).get("elements", [])
 
     for conv in elements:
@@ -54,52 +54,78 @@ def find_conversation_urn_via_navigation(session, target_urn: str) -> str | None
     return captured_urn[0]
 
 
+def parse_message_element(msg: dict) -> dict | None:
+    """Parse a single Voyager message element into a dict.
+
+    Returns {entityUrn, text, sender_name, sender_host_urn, delivered_at, is_outgoing (unset)}
+    or None if the element should be skipped.
+    """
+    body = msg.get("body", {})
+    text = body.get("text", "") if isinstance(body, dict) else str(body)
+    if not text:
+        return None
+
+    sender = msg.get("sender", {})
+    participant = sender.get("participantType", {}).get("member", {})
+    first = (participant.get("firstName") or {}).get("text", "")
+    last = (participant.get("lastName") or {}).get("text", "")
+    sender_name = f"{first} {last}".strip() or "unknown"
+
+    delivered_at = msg.get("deliveredAt")
+    ts = (
+        datetime.fromtimestamp(delivered_at / 1000, tz=timezone.utc)
+        if delivered_at
+        else None
+    )
+
+    return {
+        "entityUrn": msg.get("entityUrn"),
+        "text": text,
+        "sender_name": sender_name,
+        "sender_host_urn": sender.get("hostIdentityUrn", ""),
+        "delivered_at": ts,
+    }
+
+
 def parse_messages(raw: dict) -> list[dict]:
     """Parse raw messages response into a list of {sender, text, timestamp} dicts."""
     elements = raw.get("data", {}).get("messengerMessagesBySyncToken", {}).get("elements", [])
 
     messages = []
     for msg in elements:
-        body = msg.get("body", {})
-        text = body.get("text", "") if isinstance(body, dict) else str(body)
-        if not text:
+        parsed = parse_message_element(msg)
+        if not parsed:
             continue
-
-        participant = msg.get("sender", {}).get("participantType", {}).get("member", {})
-        first = (participant.get("firstName") or {}).get("text", "")
-        last = (participant.get("lastName") or {}).get("text", "")
-        sender_name = f"{first} {last}".strip()
-
-        delivered_at = msg.get("deliveredAt")
-        ts = datetime.fromtimestamp(delivered_at / 1000).strftime("%Y-%m-%d %H:%M") if delivered_at else ""
-
-        messages.append({"sender": sender_name or "unknown", "text": text, "timestamp": ts})
+        ts = parsed["delivered_at"]
+        messages.append({
+            "sender": parsed["sender_name"],
+            "text": parsed["text"],
+            "timestamp": ts.strftime("%Y-%m-%d %H:%M") if ts else "",
+        })
 
     messages.sort(key=lambda m: m["timestamp"])
     return messages
 
 
-def get_conversation(session, public_identifier: str) -> list[dict] | None:
+def get_conversation(session, target_urn: str, mailbox_urn: str) -> list[dict] | None:
     """Retrieve past messages with a profile.
+
+    Args:
+        session: Browser session.
+        target_urn: Target profile URN.
+        mailbox_urn: Authenticated user's profile URN.
 
     Returns a list of {sender, text, timestamp} dicts, or None if no conversation exists.
     """
-    from linkedin.db.leads import resolve_urn
-
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
 
-    target_urn = resolve_urn(public_identifier, session=session)
-    if not target_urn:
-        logger.warning("Could not resolve URN for %s", public_identifier)
-        return None
-
-    conversation_urn = find_conversation_urn(api, target_urn)
+    conversation_urn = find_conversation_urn(api, target_urn, mailbox_urn)
     if not conversation_urn:
         logger.debug("Not in recent conversations, trying navigation fallback")
         conversation_urn = find_conversation_urn_via_navigation(session, target_urn)
     if not conversation_urn:
-        logger.info("No conversation found for %s", public_identifier)
+        logger.info("No conversation found for %s", target_urn)
         return None
 
     raw = fetch_messages(api, conversation_urn)
@@ -107,34 +133,19 @@ def get_conversation(session, public_identifier: str) -> list[dict] | None:
 
 
 if __name__ == "__main__":
-    import os
-    import argparse
+    from crm.models import Lead
+    from linkedin.browser.registry import cli_parser, cli_session
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
-
-    import django
-    django.setup()
-
-    from linkedin.conf import get_first_active_profile_handle
-    from linkedin.browser.registry import get_or_create_session
-
-    logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
-
-    parser = argparse.ArgumentParser(description="Retrieve LinkedIn conversation history")
-    parser.add_argument("--handle", default=None)
+    parser = cli_parser("Retrieve LinkedIn conversation history")
     parser.add_argument("--profile", required=True, help="Public identifier of target profile")
     args = parser.parse_args()
+    session = cli_session(args)
 
-    handle = args.handle or get_first_active_profile_handle()
-    if not handle:
-        print("No active LinkedInProfile found.")
-        raise SystemExit(1)
-
-    session = get_or_create_session(handle=handle)
-    session.campaign = session.campaigns.first()
-
-    print(f"Fetching conversation as @{handle} → {args.profile}")
-    messages = get_conversation(session, args.profile)
+    print(f"Fetching conversation as {session} → {args.profile}")
+    lead = Lead.objects.get(public_identifier=args.profile)
+    target_urn = lead.get_urn(session)
+    mailbox_urn = session.self_profile["urn"]
+    messages = get_conversation(session, target_urn, mailbox_urn)
 
     if messages is None:
         print(f"No conversation found with {args.profile}")
