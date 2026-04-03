@@ -3,9 +3,10 @@ __pycache__/
 .venv/
 .pytest_cache/
 .vscode
+data/
 .dockerignore
 .env
-
+/data
 /linkedin_state.json
 /.coverage
 /venv/

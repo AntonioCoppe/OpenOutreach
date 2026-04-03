@@ -14,7 +14,8 @@ SELECTORS = {
         '[aria-label*="Invite"][aria-label*="to connect"]:visible, '
         'a:has(span:text-is("Connect")):visible, '
         'button:has(span:text-is("Connect")):visible, '
-        'button[aria-label*="Connect with"]:visible'
+        'button[aria-label*="Connect with"]:visible, '
+        '[aria-label*="Connect with"]:visible'
     ),
     "error_toast": 'div[data-test-artdeco-toast-item-type="error"]',
     "more_button": (
@@ -27,6 +28,10 @@ SELECTORS = {
         'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], '
         'div[role="button"]:text-is("Connect"), '
         'div[role="button"][aria-label*="Connect with"], '
+        'div[role="listbox"] span:text-is("Connect"), '
+        'ul[role="list"] span:text-is("Connect"), '
+        'li span:text-is("Connect"), '
+        'div.artdeco-dropdown__content span:text-is("Connect"), '
         '[role="menuitem"][aria-label*="Connect"], '
         '[role="menuitem"]:has-text("Connect"), '
         'li:text-is("Connect"), '
@@ -97,6 +102,7 @@ def _connect_direct(session):
 
     direct.first.click()
     logger.debug("Clicked direct 'Connect' button")
+    session.wait()
 
     error = session.page.locator(SELECTORS["error_toast"])
     if error.count() > 0:
@@ -136,16 +142,17 @@ def _connect_via_more(session):
 def _click_with_note(session, note_text: str) -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
     session.wait()
-
-    add_note_btn = session.page.locator(SELECTORS["add_note"])
-    if add_note_btn.count() == 0:
-        logger.debug("'Add a note' button not found — falling back to no-note")
-        return False
-
-    add_note_btn.first.click()
-    session.wait()
-
     textarea = session.page.locator(SELECTORS["note_textarea"])
+
+    if textarea.count() == 0:
+        add_note_btn = session.page.locator(SELECTORS["add_note"])
+        if add_note_btn.count() == 0:
+            logger.debug("'Add a note' button not found — falling back to no-note")
+            return False
+        add_note_btn.first.click()
+        session.wait()
+        textarea = session.page.locator(SELECTORS["note_textarea"])
+
     if textarea.count() == 0:
         logger.debug("Note textarea not found — falling back to no-note")
         return False
@@ -194,5 +201,11 @@ if __name__ == "__main__":
     if connection_status in (ProfileState.CONNECTED, ProfileState.PENDING):
         print(f"Skipping – already {connection_status.value}")
     else:
-        status = send_connection_request(session=session, profile=test_profile, note=args.note)
+        from crm.models import Lead
+        from linkedin.db.urls import public_id_to_url
+        lead = Lead.objects.filter(linkedin_url=public_id_to_url(args.profile)).first()
+        from linkedin.tasks.connect import build_connection_note
+        note = args.note or build_connection_note(lead.pk if lead else None)
+        print(f"Note: {note}")
+        status = send_connection_request(session=session, profile=test_profile, note=note)
         print(f"Finished → Status: {status.value}")
