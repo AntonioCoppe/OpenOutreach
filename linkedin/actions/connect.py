@@ -129,14 +129,14 @@ def _click_with_note(session, note_text: str) -> bool:
     if textarea.count() == 0:
         add_note_btn = session.page.locator(SELECTORS["add_note"])
         if add_note_btn.count() == 0:
-            logger.debug("'Add a note' button not found — falling back to no-note")
+            logger.debug("'Add a note' button not found — aborting")
             return False
         add_note_btn.first.click()
         session.wait()
         textarea = session.page.locator(SELECTORS["note_textarea"])
 
     if textarea.count() == 0:
-        logger.debug("Note textarea not found — falling back to no-note")
+        logger.debug("Note textarea not found — aborting")
         return False
 
     textarea.first.fill(note_text)
@@ -206,8 +206,8 @@ if __name__ == "__main__":
     else:
         from crm.models import Lead
         from linkedin.db.urls import public_id_to_url
-        lead = Lead.objects.filter(linkedin_url=public_id_to_url(args.profile)).first()
         from linkedin.tasks.connect import build_connection_note
+        lead = Lead.objects.filter(linkedin_url=public_id_to_url(args.profile)).first()
         note = args.note or build_connection_note(lead.pk if lead else None)
         print(f"Note: {note}")
         status = send_connection_request(session=session, profile=test_profile, note=note)
