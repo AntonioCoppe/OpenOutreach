@@ -69,7 +69,7 @@ class TestHealTasks:
             payload__public_id="alice",
         ).exists()
 
-    def test_uses_deal_backoff_for_check_pending(self, fake_session):
+    def test_resets_check_pending_backoff_for_startup_catch_up(self, fake_session):
         _make_pending(fake_session, "alice")
         from crm.models import Deal
         from linkedin.url_utils import public_id_to_url
@@ -82,7 +82,7 @@ class TestHealTasks:
             task_type=Task.TaskType.CHECK_PENDING,
             payload__public_id="alice",
         )
-        assert task.payload["backoff_hours"] == 96
+        assert task.payload["backoff_hours"] == 1
 
     def test_creates_follow_up_for_connected_profiles(self, fake_session):
         _make_connected(fake_session, "alice")
