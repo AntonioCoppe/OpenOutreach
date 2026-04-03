@@ -178,7 +178,8 @@ def handle_connect(task, session, qualifiers):
                     session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                 ),
             )
-            _reschedule()
+            # No action taken — short delay before next candidate
+            enqueue_connect(campaign_id, delay_seconds=10)
             return
 
         if status == ProfileState.PENDING:
@@ -187,7 +188,8 @@ def handle_connect(task, session, qualifiers):
                 campaign_id, public_id,
                 backoff_hours=cfg["check_pending_recheck_after_hours"],
             )
-            _reschedule()
+            # No action taken — short delay before next candidate
+            enqueue_connect(campaign_id, delay_seconds=10)
             return
 
         note = build_connection_note(candidate.get("lead_id"))

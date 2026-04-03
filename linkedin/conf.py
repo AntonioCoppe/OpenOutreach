@@ -69,22 +69,8 @@ REST_DAYS = tuple(
 # ----------------------------------------------------------------------
 # Connection note templates (sent with connection requests)
 # ----------------------------------------------------------------------
-CONNECTION_NOTE_PERSONALIZED = (
-    "Hi {first_name}, after 100+ engineering interviews I got tired of "
-    "high-volume resumes inflating costs and burning out teams.\n\n"
-    "Built a pre-screening system that filters thousands into a targeted "
-    "shortlist, this cuts cost per hire and scales your TA capacity.\n\n"
-    "Want the quick demo?"
-)
-
-CONNECTION_NOTE_FALLBACK = (
-    "Hi, after 100+ engineering interviews I got tired of slow screening "
-    "dragging out time to hire.\n\n"
-    "Built a pre-screening system that filters thousands on actual "
-    "engineering ability, this accelerates your pipeline without "
-    "sacrificing quality.\n\n"
-    "Want the quick demo?"
-)
+CONNECTION_NOTE_PERSONALIZED = os.getenv("CONNECTION_NOTE_PERSONALIZED", "").replace("\\n", "\n")
+CONNECTION_NOTE_FALLBACK = os.getenv("CONNECTION_NOTE_FALLBACK", "").replace("\\n", "\n")
 
 # Path to GIF/image to attach to follow-up messages (empty = disabled).
 # Relative paths are resolved from the repo root so the same .env works

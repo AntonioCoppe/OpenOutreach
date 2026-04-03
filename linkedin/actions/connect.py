@@ -10,10 +10,18 @@ logger = logging.getLogger(__name__)
 
 SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
-    "invite_to_connect": 'button[aria-label*="Invite"][aria-label*="to connect"]:visible, button[aria-label*="Connect with"]:visible',
+    "invite_to_connect": '[aria-label*="Invite"][aria-label*="to connect"]:visible, [aria-label*="Connect with"]:visible',
     "error_toast": 'div[data-test-artdeco-toast-item-type="error"]',
-    "more_button": 'button[id*="overflow"]:visible, button[aria-label*="More actions"]:visible',
-    "connect_option": 'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], div[role="button"][aria-label*="Connect with"]',
+    "more_button": 'button[id*="overflow"]:visible, button[aria-label*="More actions"]:visible, button[aria-label="More"]:visible',
+    "connect_option": (
+        'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], '
+        'div[role="button"][aria-label*="Connect with"], '
+        'div[role="listbox"] span:text-is("Connect"), '
+        'ul[role="list"] span:text-is("Connect"), '
+        'li span:text-is("Connect"), '
+        'div.artdeco-dropdown__content span:text-is("Connect"), '
+        '[role="menuitem"]:has-text("Connect")'
+    ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "add_note": 'button:has-text("Add a note")',
     "note_textarea": 'textarea[name="message"], textarea#custom-message, textarea[id*="custom-message"]',
@@ -53,7 +61,8 @@ def send_connection_request(
 
     if note:
         if not _click_with_note(session, note):
-            _click_without_note(session)
+            logger.warning("Could not add note for %s — aborting connection request", public_identifier)
+            return ProfileState.QUALIFIED
     else:
         _click_without_note(session)
 
@@ -78,6 +87,7 @@ def _connect_direct(session):
 
     direct.first.click()
     logger.debug("Clicked direct 'Connect' button")
+    session.wait()
 
     error = session.page.locator(SELECTORS["error_toast"])
     if error.count() > 0:
@@ -113,15 +123,18 @@ def _click_with_note(session, note_text: str) -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
     session.wait()
 
-    add_note_btn = session.page.locator(SELECTORS["add_note"])
-    if add_note_btn.count() == 0:
-        logger.debug("'Add a note' button not found — falling back to no-note")
-        return False
-
-    add_note_btn.first.click()
-    session.wait()
-
     textarea = session.page.locator(SELECTORS["note_textarea"])
+
+    # On modal flow, need to click "Add a note" first to reveal textarea
+    if textarea.count() == 0:
+        add_note_btn = session.page.locator(SELECTORS["add_note"])
+        if add_note_btn.count() == 0:
+            logger.debug("'Add a note' button not found — falling back to no-note")
+            return False
+        add_note_btn.first.click()
+        session.wait()
+        textarea = session.page.locator(SELECTORS["note_textarea"])
+
     if textarea.count() == 0:
         logger.debug("Note textarea not found — falling back to no-note")
         return False
@@ -191,5 +204,11 @@ if __name__ == "__main__":
     if connection_status in (ProfileState.CONNECTED, ProfileState.PENDING):
         print(f"Skipping – already {connection_status.value}")
     else:
-        status = send_connection_request(session=session, profile=test_profile, note=args.note)
+        from crm.models import Lead
+        from linkedin.db.urls import public_id_to_url
+        lead = Lead.objects.filter(linkedin_url=public_id_to_url(args.profile)).first()
+        from linkedin.tasks.connect import build_connection_note
+        note = args.note or build_connection_note(lead.pk if lead else None)
+        print(f"Note: {note}")
+        status = send_connection_request(session=session, profile=test_profile, note=note)
         print(f"Finished → Status: {status.value}")
