@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from functools import cached_property
 
 from linkedin.conf import MIN_DELAY, MAX_DELAY
 
@@ -20,15 +21,9 @@ def random_sleep(min_val, max_val):
 
 
 class AccountSession:
-    def __init__(self, handle: str):
-        from linkedin.models import LinkedInProfile
-
-        self.handle = handle.strip().lower()
-
-        self.linkedin_profile = LinkedInProfile.objects.select_related(
-            "user",
-        ).get(user__username=self.handle)
-        self.django_user = self.linkedin_profile.user
+    def __init__(self, linkedin_profile):
+        self.linkedin_profile = linkedin_profile
+        self.django_user = linkedin_profile.user
 
         # Active campaign — set by the daemon before each lane execution
         self.campaign = None
@@ -39,26 +34,43 @@ class AccountSession:
         self.browser = None
         self.playwright = None
 
-    @property
+    @cached_property
     def campaigns(self):
-        """All campaigns this user belongs to."""
+        """All campaigns this user belongs to (cached)."""
         from linkedin.models import Campaign
         from linkedin.conf import ENABLE_FREEMIUM_CAMPAIGN
 
         campaigns = Campaign.objects.filter(users=self.django_user)
         if not ENABLE_FREEMIUM_CAMPAIGN:
             campaigns = campaigns.filter(is_freemium=False)
-        return campaigns
+        return list(campaigns)
 
     def ensure_browser(self):
         """Launch or recover browser + login if needed. Call before using .page"""
         from linkedin.browser.login import start_browser_session
 
         if not self.page or self.page.is_closed():
-            logger.debug("Launching/recovering browser for %s", self.handle)
-            start_browser_session(session=self, handle=self.handle)
+            logger.debug("Launching/recovering browser for %s", self)
+            start_browser_session(session=self)
         else:
             self._maybe_refresh_cookies()
+
+    @cached_property
+    def self_profile(self) -> dict:
+        """Lazy accessor: return the authenticated user's profile dict (cached).
+
+        Reads from ``self_lead.profile_data`` if available, otherwise
+        discovers via Voyager API and persists.
+        """
+        self.linkedin_profile.refresh_from_db(fields=["self_lead"])
+        lead = self.linkedin_profile.self_lead
+        if lead and lead.profile_data and "urn" in lead.profile_data:
+            return lead.profile_data
+
+        from linkedin.setup.self_profile import discover_self_profile
+
+        self.ensure_browser()
+        return discover_self_profile(self)
 
     def wait(self, min_delay=MIN_DELAY, max_delay=MAX_DELAY):
         random_sleep(min_delay, max_delay)
@@ -76,9 +88,9 @@ class AccountSession:
             if cookie.get("name") == _AUTH_COOKIE_NAME:
                 expires = cookie.get("expires", -1)
                 if expires > 0 and expires < time.time():
-                    logger.warning("Auth cookie expired for %s — re-authenticating", self.handle)
+                    logger.warning("Auth cookie expired for %s — re-authenticating", self)
                     self.close()
-                    start_browser_session(session=self, handle=self.handle)
+                    start_browser_session(session=self)
                 return
 
     def close(self):
@@ -89,13 +101,13 @@ class AccountSession:
                     self.browser.close()
                 if self.playwright:
                     self.playwright.stop()
-                logger.info("Browser closed gracefully (%s)", self.handle)
+                logger.info("Browser closed gracefully (%s)", self)
             except Exception as e:
                 logger.debug("Error closing browser: %s", e)
             finally:
                 self.page = self.context = self.browser = self.playwright = None
 
-        logger.info("Account session closed → %s", self.handle)
+        logger.info("Account session closed → %s", self)
 
     def __del__(self):
         try:
@@ -104,4 +116,4 @@ class AccountSession:
             pass
 
     def __repr__(self) -> str:
-        return f"<AccountSession {self.handle}>"
+        return self.linkedin_profile.linkedin_username

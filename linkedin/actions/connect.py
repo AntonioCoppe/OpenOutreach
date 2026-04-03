@@ -4,16 +4,34 @@ from typing import Dict, Any
 
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
-from linkedin.browser.nav import find_top_card
+from linkedin.browser.nav import find_top_card, dump_page_html
 
 logger = logging.getLogger(__name__)
 
 SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
-    "invite_to_connect": 'button[aria-label*="Invite"][aria-label*="to connect"]:visible, button[aria-label*="Connect with"]:visible',
+    "invite_to_connect": (
+        '[aria-label*="Invite"][aria-label*="to connect"]:visible, '
+        'a:has(span:text-is("Connect")):visible, '
+        'button:has(span:text-is("Connect")):visible, '
+        'button[aria-label*="Connect with"]:visible'
+    ),
     "error_toast": 'div[data-test-artdeco-toast-item-type="error"]',
-    "more_button": 'button[id*="overflow"]:visible, button[aria-label*="More actions"]:visible',
-    "connect_option": 'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], div[role="button"][aria-label*="Connect with"]',
+    "more_button": (
+        'button[aria-label="More"]:visible, '
+        'button[id*="overflow"]:visible, '
+        'button[aria-label*="More actions"]:visible, '
+        'button:has(span:text-is("More")):visible'
+    ),
+    "connect_option": (
+        'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], '
+        'div[role="button"]:text-is("Connect"), '
+        'div[role="button"][aria-label*="Connect with"], '
+        '[role="menuitem"][aria-label*="Connect"], '
+        '[role="menuitem"]:has-text("Connect"), '
+        'li:text-is("Connect"), '
+        'span[role="button"]:text-is("Connect")'
+    ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "add_note": 'button:has-text("Add a note")',
     "note_textarea": 'textarea[name="message"], textarea#custom-message, textarea[id*="custom-message"]',
@@ -43,12 +61,13 @@ def send_connection_request(
     Sends a LinkedIn connection request, optionally with a note.
 
     Assumes the profile page is already loaded (caller navigates via
-    ``get_connection_status`` or ``search_profile`` beforehand).
+    ``get_connection_status`` or ``visit_profile`` beforehand).
     """
     public_identifier = profile.get('public_identifier')
 
     if not _connect_direct(session) and not _connect_via_more(session):
         logger.debug("Connect button not found for %s — staying at current stage", public_identifier)
+        dump_page_html(session, profile)
         return ProfileState.QUALIFIED
 
     if note:
@@ -89,17 +108,22 @@ def _connect_direct(session):
 def _connect_via_more(session):
     session.wait()
     top_card = find_top_card(session)
+    page = session.page
 
-    # Fallback: More → Connect
-    more = _first_visible(top_card.locator(SELECTORS["more_button"]))
-    if more is None:
-        return False
-    more.click()
+    # Dropdown may render as a portal outside top_card, so search page-wide
+    connect_option = page.locator(SELECTORS["connect_option"])
+    visible_connect_option = _first_visible(connect_option)
 
-    session.wait()
+    # Connect option may already be visible (More dropdown opened by status check)
+    if visible_connect_option is None:
+        more = _first_visible(top_card.locator(SELECTORS["more_button"]))
+        if more is None:
+            return False
+        more.click()
+        session.wait()
 
     # Search at page level — LinkedIn renders dropdown as a portal outside top_card
-    connect_option = session.page.locator(SELECTORS["connect_option"])
+    connect_option = page.locator(SELECTORS["connect_option"])
     visible_connect_option = _first_visible(connect_option)
     if visible_connect_option is None:
         return False
@@ -148,42 +172,21 @@ def _click_without_note(session):
 
 
 if __name__ == "__main__":
-    import os
-    import argparse
-
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
-
-    import django
-    django.setup()
-
-    from linkedin.conf import get_first_active_profile_handle
+    from linkedin.browser.registry import cli_parser, cli_session
     from linkedin.actions.status import get_connection_status
-    from linkedin.browser.registry import get_or_create_session
 
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="[%(levelname)s] %(message)s",
-    )
-
-    parser = argparse.ArgumentParser(description="Send a LinkedIn connection request")
-    parser.add_argument("--handle", default=None, help="LinkedIn handle (default: first active profile)")
+    parser = cli_parser("Send a LinkedIn connection request")
     parser.add_argument("--profile", required=True, help="Public identifier of the target profile")
     parser.add_argument("--note", default="", help="Optional connection note text")
     args = parser.parse_args()
-
-    handle = args.handle or get_first_active_profile_handle()
-    if not handle:
-        print("No active LinkedInProfile found and no --handle provided.")
-        raise SystemExit(1)
+    session = cli_session(args)
 
     test_profile = {
         "url": f"https://www.linkedin.com/in/{args.profile}/",
         "public_identifier": args.profile,
     }
 
-    session = get_or_create_session(handle=handle)
-    session.campaign = session.campaigns.first()
-    print(f"Testing connection request as @{handle} → {args.profile}")
+    print(f"Testing connection request as {session} → {args.profile}")
 
     connection_status = get_connection_status(session, test_profile)
     print(f"Pre-check status → {connection_status.value}")

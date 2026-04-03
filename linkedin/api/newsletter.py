@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import requests
 from linkedin.browser.session import AccountSession
@@ -62,36 +61,17 @@ def subscribe_to_newsletter(email: str, linkedin: str | None = None) -> bool:
         return False
 
 
-def normalize_boolean(value: Any) -> bool | None:
-    """Robust boolean normalization from YAML/config values."""
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        cleaned = value.strip().lower()
-        if cleaned in ("true", "t", "yes", "y", "1", "on"):
-            return True
-        if cleaned in ("false", "f", "no", "n", "0", "off", ""):
-            return False
-        return None
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return None
-
-
 def ensure_newsletter_subscription(session: AccountSession, linkedin_url: str | None = None):
     """Subscribe the account to the OpenOutreach newsletter if enabled."""
     lp = session.linkedin_profile
-    handle = session.handle
 
     if not lp.subscribe_newsletter:
-        logger.debug("Newsletter disabled for %s", handle)
+        logger.debug("Newsletter disabled for %s", session)
         return
 
     email = lp.linkedin_username
     if not email or "@" not in str(email):
-        logger.warning("No valid email for newsletter: %s", handle)
+        logger.warning("No valid email for newsletter: %s", session)
         return
 
     logger.debug("Subscribing %s to OpenOutreach newsletter...", email)

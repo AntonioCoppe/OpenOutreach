@@ -27,7 +27,7 @@ SELECTORS = {
 def playwright_login(session: "AccountSession"):
     page = session.page
     lp = session.linkedin_profile
-    logger.info(colored("Fresh login sequence starting", "cyan") + f" for @{session.handle}")
+    logger.info(colored("Fresh login sequence starting", "cyan") + f" for {session}")
 
     goto_page(
         session,
@@ -68,15 +68,15 @@ def _save_cookies(session):
     session.linkedin_profile.save(update_fields=["cookie_data"])
 
 
-def start_browser_session(session: "AccountSession", handle: str):
-    logger.debug("Configuring browser for @%s", handle)
+def start_browser_session(session: "AccountSession"):
+    logger.debug("Configuring browser for %s", session)
 
     session.linkedin_profile.refresh_from_db(fields=["cookie_data"])
     cookie_data = session.linkedin_profile.cookie_data
 
     storage_state = cookie_data if cookie_data else None
     if storage_state:
-        logger.info("Loading saved session for @%s", handle)
+        logger.info("Loading saved session for %s", session)
 
     try:
         session.page, session.context, session.browser, session.playwright = launch_browser(
@@ -111,25 +111,13 @@ def start_browser_session(session: "AccountSession", handle: str):
 
 
 if __name__ == "__main__":
-    import sys
+    from linkedin.browser.registry import cli_parser, cli_session
 
-    logging.getLogger().handlers.clear()
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(levelname)-8s │ %(message)s',
-    )
-
-    if len(sys.argv) != 2:
-        print("Usage: python -m linkedin.browser.login <handle>")
-        sys.exit(1)
-
-    handle = sys.argv[1]
-
-    from linkedin.browser.registry import get_or_create_session
-    session = get_or_create_session(handle=handle)
-
+    parser = cli_parser("Start a LinkedIn browser session")
+    args = parser.parse_args()
+    session = cli_session(args)
     session.ensure_browser()
 
-    start_browser_session(session=session, handle=handle)
+    start_browser_session(session=session)
     print("Logged in! Close browser manually.")
     session.page.pause()

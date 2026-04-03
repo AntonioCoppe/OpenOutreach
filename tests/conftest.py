@@ -1,4 +1,7 @@
 # tests/conftest.py
+from unittest.mock import patch
+
+import numpy as np
 import pytest
 
 from linkedin.management.setup_crm import setup_crm
@@ -15,12 +18,21 @@ def _ensure_crm_data(db):
     setup_crm()
 
 
+@pytest.fixture(autouse=True)
+def _mock_embeddings(request):
+    """Stub fastembed so tests don't need the ONNX model."""
+    if "no_embed_mock" in request.keywords:
+        yield
+    else:
+        with patch("linkedin.ml.embeddings.embed_text", return_value=np.ones(384)):
+            yield
+
+
 class FakeAccountSession:
     """Minimal stand-in for AccountSession — exposes django_user + campaign."""
 
     def __init__(self, django_user, linkedin_profile, campaign):
         self.django_user = django_user
-        self.handle = django_user.username
         self.linkedin_profile = linkedin_profile
         self.campaign = campaign
 
@@ -54,9 +66,3 @@ def fake_session(db):
     )
 
     return FakeAccountSession(django_user=user, linkedin_profile=linkedin_profile, campaign=campaign)
-
-
-@pytest.fixture
-def embeddings_db(db):
-    """Marker fixture — embeddings now live in the Django test DB."""
-    yield

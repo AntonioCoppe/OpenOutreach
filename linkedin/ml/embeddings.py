@@ -6,7 +6,7 @@ import logging
 
 import numpy as np
 
-from linkedin.conf import CAMPAIGN_CONFIG
+from linkedin.conf import CAMPAIGN_CONFIG, FASTEMBED_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,8 @@ def _get_model():
 
         model_name = CAMPAIGN_CONFIG["embedding_model"]
         logger.debug("Loading embedding model: %s", model_name)
-        _model = TextEmbedding(model_name=model_name)
+        FASTEMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _model = TextEmbedding(model_name=model_name, cache_dir=str(FASTEMBED_CACHE_DIR))
     return _model
 
 
@@ -39,15 +40,3 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     return np.array(embeddings, dtype=np.float32)
 
 
-def embed_profile(lead_id: int, public_id: str, profile_data: dict) -> bool:
-    """Build text, compute embedding, and store on Lead.
-
-    Returns True if embedding was stored, False on failure.
-    """
-    from crm.models import Lead
-    from linkedin.ml.profile_text import build_profile_text
-
-    text = build_profile_text({"profile": profile_data})
-    emb = embed_text(text)
-    Lead.objects.filter(pk=lead_id).update(embedding=emb.tobytes())
-    return True

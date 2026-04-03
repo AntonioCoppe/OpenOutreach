@@ -35,7 +35,7 @@ def _make_connected(session, public_id="alice"):
 @pytest.mark.django_db
 class TestHealTasks:
     @pytest.fixture(autouse=True)
-    def _db(self, embeddings_db):
+    def _db(self, db):
         pass
 
     def test_recovers_stale_running_tasks(self, fake_session):
@@ -72,7 +72,7 @@ class TestHealTasks:
     def test_uses_deal_backoff_for_check_pending(self, fake_session):
         _make_pending(fake_session, "alice")
         from crm.models import Deal
-        from linkedin.db.urls import public_id_to_url
+        from linkedin.url_utils import public_id_to_url
         Deal.objects.filter(
             lead__linkedin_url=public_id_to_url("alice"),
         ).update(backoff_hours=96)

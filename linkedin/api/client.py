@@ -6,9 +6,8 @@ from urllib.parse import urlencode
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from linkedin.api.voyager import parse_linkedin_voyager_response
-from linkedin.conf import VOYAGER_REQUEST_TIMEOUT_MS
-from linkedin.db.urls import url_to_public_id
+from linkedin.api.voyager import parse_linkedin_voyager_response, parse_connection_degree
+from linkedin.url_utils import url_to_public_id
 from linkedin.exceptions import AuthenticationError
 
 logger = logging.getLogger(__name__)
@@ -31,15 +30,20 @@ class _FetchResponse:
         return self._text
 
 
+VOYAGER_REQUEST_TIMEOUT_MS = 30_000
+
+
 class PlaywrightLinkedinAPI:
 
     def __init__(
             self,
             session: "AccountSession",
+            timeout_ms: int = VOYAGER_REQUEST_TIMEOUT_MS,
     ):
         self.session = session
         self.page = session.page
         self.context = session.context
+        self.timeout_ms = timeout_ms
 
         # Extract cookies from the browser context to get JSESSIONID for csrf-token
         cookies = self.context.cookies()
@@ -76,7 +80,7 @@ class PlaywrightLinkedinAPI:
                     return {status: r.status, ok: r.ok, body: await r.text()};
                 });
             }""",
-            [method, url, headers, body, VOYAGER_REQUEST_TIMEOUT_MS],
+            [method, url, headers, body, self.timeout_ms],
         )
         return _FetchResponse(raw)
 
@@ -165,3 +169,36 @@ class PlaywrightLinkedinAPI:
         data = res.json()
         extracted_info = parse_linkedin_voyager_response(data, public_identifier=public_identifier)
         return extracted_info, data
+
+    TOPCARD_DECORATION = (
+        "com.linkedin.voyager.dash.deco.identity.profile.TopCardSupplementary-120"
+    )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=30),
+        retry=retry_if_exception_type(IOError),
+        reraise=True,
+    )
+    def get_connection_degree(self, public_identifier: str) -> int | None:
+        """Fetch connection degree via the TopCard decoration.
+
+        Uses a lightweight decoration that reliably includes
+        MemberRelationship entities even when FullProfileWithEntities
+        does not.  Returns 1/2/3 or None.
+        """
+        res = self.get(
+            "https://www.linkedin.com/voyager/api/identity/dash/profiles",
+            params={
+                "decorationId": self.TOPCARD_DECORATION,
+                "memberIdentity": public_identifier,
+                "q": "memberIdentity",
+            },
+        )
+
+        if res.status == 401:
+            raise AuthenticationError("LinkedIn API returned 401 Unauthorized.")
+        if not res.ok:
+            raise IOError(f"LinkedIn API error {res.status}")
+
+        return parse_connection_degree(res.json())

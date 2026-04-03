@@ -6,7 +6,7 @@ import csv
 import io
 import logging
 
-from linkedin.db.urls import public_id_to_url, url_to_public_id
+from linkedin.url_utils import public_id_to_url, url_to_public_id
 from linkedin.enums import ProfileState
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def create_seed_leads(
     for public_id in public_ids:
         url = public_id_to_url(public_id)
 
-        lead, _ = Lead.objects.get_or_create(linkedin_url=url, defaults={"public_identifier": public_id})
+        lead, _ = Lead.objects.get_or_create(public_identifier=public_id, defaults={"linkedin_url": url})
 
         if Deal.objects.filter(lead=lead, campaign=campaign).exists():
             logger.debug("Seed %s already has a deal, skipping", public_id)

@@ -4,8 +4,9 @@ import logging
 from typing import Dict, Any
 from urllib.parse import urlparse, parse_qs, urlencode
 
-from linkedin.browser.nav import goto_page, human_type
-from linkedin.db.urls import url_to_public_id
+from linkedin.browser.nav import goto_page, human_type, extract_in_urls
+from linkedin.db.leads import discover_and_enrich
+from linkedin.url_utils import url_to_public_id
 
 logger = logging.getLogger(__name__)
 
@@ -55,19 +56,23 @@ def _go_to_profile(session: "AccountSession", url: str, public_identifier: str):
     )
 
 
-def search_profile(session: "AccountSession", profile: Dict[str, Any]):
+def visit_profile(session: "AccountSession", profile: Dict[str, Any]):
     public_identifier = profile.get("public_identifier")
 
     # Ensure browser is alive before doing anything
     session.ensure_browser()
 
-    if f"/in/{public_identifier}" in session.page.url:
-        return
+    already_there = f"/in/{public_identifier}" in session.page.url
 
-    #_simulate_human_search(session, profile)
+    if already_there:
+        return
 
     url = profile.get("url")
     _go_to_profile(session, url, public_identifier)
+
+    # Discover and enrich new profiles visible on the page
+    urls = extract_in_urls(session.page)
+    discover_and_enrich(session, urls)
 
 
 def _initiate_search(session: "AccountSession", keyword: str):
@@ -101,15 +106,14 @@ def _paginate_to_next_page(session: "AccountSession", page_num: int):
 
 
 def search_people(session: "AccountSession", keyword: str, page: int = 1):
-    """Search LinkedIn People by keyword and navigate to the given page.
-
-    Profile discovery happens automatically — goto_page() calls
-    _extract_in_urls() → _enrich_new_urls().
-    """
+    """Search LinkedIn People by keyword and navigate to the given page."""
     session.ensure_browser()
     _initiate_search(session, keyword)
     if page > 1:
         _paginate_to_next_page(session, page)
+
+    urls = extract_in_urls(session.page)
+    discover_and_enrich(session, urls)
 
 
 def _simulate_human_search(session: "AccountSession", profile: Dict[str, Any]) -> bool:
@@ -165,42 +169,21 @@ def _simulate_human_search(session: "AccountSession", profile: Dict[str, Any]) -
 
 # ——————————————————————————————————————————————————————————————
 if __name__ == "__main__":
-    import os
-    import argparse
+    from linkedin.browser.registry import cli_parser, cli_session
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
-
-    import django
-    django.setup()
-
-    from linkedin.conf import get_first_active_profile_handle
-    from linkedin.browser.registry import get_or_create_session
-
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="[%(levelname)s] %(message)s",
-    )
-
-    parser = argparse.ArgumentParser(description="Navigate to a LinkedIn profile")
-    parser.add_argument("--handle", default=None, help="LinkedIn handle (default: first active profile)")
+    parser = cli_parser("Navigate to a LinkedIn profile")
     parser.add_argument("--profile", required=True, help="Public identifier of the target profile")
     args = parser.parse_args()
-
-    handle = args.handle or get_first_active_profile_handle()
-    if not handle:
-        print("No active LinkedInProfile found and no --handle provided.")
-        raise SystemExit(1)
+    session = cli_session(args)
 
     test_profile = {
         "url": f"https://www.linkedin.com/in/{args.profile}/",
         "public_identifier": args.profile,
     }
 
-    session = get_or_create_session(handle=handle)
-    session.campaign = session.campaigns.first()
-    print(f"Navigating to profile as @{handle} → {args.profile}")
+    print(f"Navigating to profile as {session} → {args.profile}")
 
-    search_profile(session, test_profile)
+    visit_profile(session, test_profile)
 
     logger.info("Search complete! Final URL → %s", session.page.url)
     input("Press Enter to close browser...")
