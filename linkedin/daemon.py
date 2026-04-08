@@ -63,7 +63,12 @@ class _FreemiumRotator:
             self._next += 1
 
 
-def _bring_task_forward(task_type: str, payload: dict, scheduled_at) -> tuple[bool, bool]:
+def _bring_task_forward(
+    task_type: str,
+    payload: dict,
+    scheduled_at,
+    dedup_keys: list[str] | None = None,
+) -> tuple[bool, bool]:
     """Ensure one pending task exists and is scheduled no later than *scheduled_at*.
 
     Returns ``(created, rescheduled)``.
@@ -72,7 +77,8 @@ def _bring_task_forward(task_type: str, payload: dict, scheduled_at) -> tuple[bo
         "task_type": task_type,
         "status": Task.Status.PENDING,
     }
-    for key, value in payload.items():
+    for key in (dedup_keys if dedup_keys is not None else payload):
+        value = payload[key]
         filters[f"payload__{key}"] = value
 
     existing = Task.objects.filter(**filters).order_by("scheduled_at").first()
@@ -233,6 +239,7 @@ def heal_tasks(session):
                     "backoff_hours": cfg["check_pending_recheck_after_hours"],
                 },
                 target_time,
+                dedup_keys=["campaign_id", "public_id"],
             )
             created += int(was_created)
             rescheduled += int(was_rescheduled)
