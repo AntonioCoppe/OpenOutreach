@@ -10,6 +10,8 @@ import random
 from dataclasses import dataclass
 from typing import Callable
 
+from linkedin.tasks.sweep_connections import enqueue_sweep_connections
+
 from django.utils import timezone
 from termcolor import colored
 
@@ -184,10 +186,7 @@ def handle_connect(task, session, qualifiers):
 
         if status == ProfileState.PENDING:
             set_profile_state(session, public_id, status.value)
-            enqueue_check_pending(
-                campaign_id, public_id,
-                backoff_hours=cfg["check_pending_recheck_after_hours"],
-            )
+            enqueue_sweep_connections()
             # No action taken — short delay before next candidate
             enqueue_connect(campaign_id, delay_seconds=10)
             return
@@ -213,10 +212,7 @@ def handle_connect(task, session, qualifiers):
             )
 
             if new_state == ProfileState.PENDING:
-                enqueue_check_pending(
-                    campaign_id, public_id,
-                    backoff_hours=cfg["check_pending_recheck_after_hours"],
-                )
+                enqueue_sweep_connections()
             elif new_state == ProfileState.CONNECTED:
                 enqueue_follow_up(
                     campaign_id,
@@ -270,29 +266,6 @@ def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
         task_type=Task.TaskType.CONNECT,
         payload={"campaign_id": campaign_id},
         delay_seconds=delay_seconds,
-    )
-
-
-def enqueue_check_pending(
-    campaign_id: int,
-    public_id: str,
-    backoff_hours: float,
-    jitter_factor: float | None = None,
-):
-    if jitter_factor is None:
-        jitter_factor = CAMPAIGN_CONFIG["check_pending_jitter_factor"]
-
-    delay_hours = backoff_hours * random.uniform(1.0, 1.0 + jitter_factor)
-
-    _enqueue_task(
-        task_type=Task.TaskType.CHECK_PENDING,
-        payload={
-            "campaign_id": campaign_id,
-            "public_id": public_id,
-            "backoff_hours": backoff_hours,
-        },
-        delay_seconds=delay_hours * 3600,
-        dedup_keys=["campaign_id", "public_id"],
     )
 
 

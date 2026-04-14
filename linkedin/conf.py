@@ -63,6 +63,10 @@ REST_DAYS = tuple(
     int(day.strip()) for day in os.getenv("REST_DAYS", "5,6").split(",") if day.strip()
 )      # 0=Mon … 6=Sun; default Sat+Sun off
 
+# How often to sweep the My Network → Connections page to detect accepted
+# invitations in bulk (replaces per-profile check_pending visits).
+CONNECTION_SWEEP_INTERVAL_HOURS = float(os.getenv("CONNECTION_SWEEP_INTERVAL_HOURS", "2"))
+
 # ----------------------------------------------------------------------
 # Campaign config (timing + ML defaults — hardcoded, no YAML)
 # ----------------------------------------------------------------------
@@ -94,7 +98,6 @@ POST_ACCEPT_MESSAGE_TEMPLATE = os.getenv(
 )
 
 CAMPAIGN_CONFIG = {
-    "check_pending_recheck_after_hours": 1,
     "enrich_min_interval": 1,
     "min_action_interval": 120,
     "qualification_n_mc_samples": 100,
@@ -103,7 +106,6 @@ CAMPAIGN_CONFIG = {
     "embedding_model": "BAAI/bge-small-en-v1.5",
     "connect_delay_seconds": 10,
     "connect_no_candidate_delay_seconds": 300,
-    "check_pending_jitter_factor": 0.2,
 }
 
 # ----------------------------------------------------------------------

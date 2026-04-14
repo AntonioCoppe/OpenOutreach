@@ -29,10 +29,10 @@ Detailed module documentation for OpenOutreach. See `CLAUDE.md` for rules and qu
 
 Persistent queue backed by `Task` model. Worker loop in `daemon.py`: `seconds_until_active()` guard pauses outside active hours/rest days → pop oldest due task → set campaign on session → RUNNING → dispatch via `_HANDLERS` dict → COMPLETED/FAILED. Failures captured by `failure_diagnostics()` context manager. `heal_tasks()` reconciles on startup.
 
-Three task types (handlers in `linkedin/tasks/`, signature: `handle_*(task, session, qualifiers)`):
+Task types (handlers in `linkedin/tasks/`, signature: `handle_*(task, session, qualifiers)`):
 
 1. **`handle_connect`** — Unified via `ConnectStrategy` dataclass. Regular: `find_candidate()` from `pools.py`; freemium: `find_freemium_candidate()`. Unreachable detection after `MAX_CONNECT_ATTEMPTS` (3).
-2. **`handle_check_pending`** — Per-profile. Exponential backoff with jitter. On acceptance → enqueues `follow_up`.
+2. **`handle_sweep_connections`** — Account-wide. Scrapes `mynetwork/invite-connect/connections/` once per `CONNECTION_SWEEP_INTERVAL_HOURS`, cross-references PENDING Deals by `public_id`, transitions matches to CONNECTED and enqueues `follow_up`. Replaces the legacy per-profile `check_pending` flow.
 3. **`handle_follow_up`** — Per-profile. Runs agentic follow-up via `run_follow_up_agent()`. Safety net re-enqueues in 72h.
 
 ## Qualification ML Pipeline
@@ -61,15 +61,15 @@ Three apps in `INSTALLED_APPS`:
 - **ActionLog** (`linkedin/models.py`) — FK to LinkedInProfile + Campaign. `action_type` (connect/follow_up), `created_at`. Composite index on `(linkedin_profile, action_type, created_at)`.
 - **Lead** (`crm/models/lead.py`) — Per LinkedIn URL (`linkedin_url` = unique). `public_identifier` (derived from URL). `first_name`, `last_name`, `company_name`. `description` = parsed profile JSON. `embedding` = 384-dim float32 BinaryField (nullable). `disqualified` = permanent exclusion. `embedding_array` property for numpy access. `get_labeled_arrays(campaign)` classmethod returns (X, y) for GP warm start. Labels: non-FAILED state → 1, FAILED+DISQUALIFIED → 0, other FAILED → skipped.
 - **Deal** (`crm/models/deal.py`) — Per campaign (campaign-scoped via FK). `state` = CharField (ProfileState choices). `closing_reason` = CharField (ClosingReason choices: COMPLETED/FAILED/DISQUALIFIED). `reason` = qualification/failure reason. `connect_attempts` = retry count. `backoff_hours` = check_pending backoff. `creation_date`, `update_date`.
-- **Task** (`linkedin/models.py`) — `task_type` (connect/check_pending/follow_up), `status` (pending/running/completed/failed), `scheduled_at`, `payload` (JSONField), `error`, `started_at`, `completed_at`. Composite index on `(status, scheduled_at)`.
+- **Task** (`linkedin/models.py`) — `task_type` (connect/follow_up/sweep_connections; legacy `check_pending` retained for historical rows), `status` (pending/running/completed/failed), `scheduled_at`, `payload` (JSONField), `error`, `started_at`, `completed_at`. Composite index on `(status, scheduled_at)`.
 - **ChatMessage** (`chat/models.py`) — GenericForeignKey to any object. `content`, `owner`, `answer_to` (self FK), `topic` (self FK), `recipients`, `to` (M2M to User).
 
 ## Key Modules
 
 - **`daemon.py`** — Worker loop with active-hours guard (`ENABLE_ACTIVE_HOURS` flag, `seconds_until_active()`), `_build_qualifiers()`, `heal_tasks()`, freemium import, `_FreemiumRotator`.
 - **`diagnostics.py`** — `failure_diagnostics()` context manager, `capture_failure()` saves page HTML/screenshot/traceback to `/tmp/openoutreach-diagnostics/`.
-- **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_check_pending`/`enqueue_follow_up`.
-- **`tasks/check_pending.py`** — `handle_check_pending`, exponential backoff.
+- **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`.
+- **`tasks/sweep_connections.py`** — `handle_sweep_connections`, `enqueue_sweep_connections`. Replaces legacy `check_pending`.
 - **`tasks/follow_up.py`** — `handle_follow_up`, rate limiting.
 - **`pipeline/qualify.py`** — `run_qualification()`, `fetch_qualification_candidates()`.
 - **`pipeline/search.py`** — `run_search()`, keyword management.

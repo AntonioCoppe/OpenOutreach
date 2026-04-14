@@ -23,22 +23,21 @@ from linkedin.conf import (
 from linkedin.diagnostics import failure_diagnostics
 from linkedin.ml.qualifier import BayesianQualifier, KitQualifier
 from linkedin.models import ActionLog, Task
-from linkedin.tasks.check_pending import handle_check_pending
 from linkedin.tasks.connect import (
-    enqueue_check_pending,
     enqueue_connect,
     enqueue_follow_up,
     handle_connect,
     recommended_action_delay,
 )
 from linkedin.tasks.follow_up import handle_follow_up
+from linkedin.tasks.sweep_connections import handle_sweep_connections
 
 logger = logging.getLogger(__name__)
 
 _HANDLERS = {
     Task.TaskType.CONNECT: handle_connect,
-    Task.TaskType.CHECK_PENDING: handle_check_pending,
     Task.TaskType.FOLLOW_UP: handle_follow_up,
+    Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
 }
 
 
@@ -182,8 +181,6 @@ def heal_tasks(session):
     from linkedin.enums import ProfileState
     from linkedin.models import Campaign
 
-    cfg = CAMPAIGN_CONFIG
-
     # 1. Recover stale running tasks
     stale_count = Task.objects.filter(status=Task.Status.RUNNING).update(
         status=Task.Status.PENDING,
@@ -212,44 +209,24 @@ def heal_tasks(session):
         delay = recommended_action_delay(session.linkedin_profile, ActionLog.ActionType.CONNECT)
         enqueue_connect(campaign.pk, delay_seconds=delay)
 
-    # 3. Check_pending tasks for PENDING profiles. Bring these forward on
-    # startup so accepted connections are caught up immediately after a restart
-    # instead of waiting on stale 24h/48h backoff tasks.
-    for campaign in session.campaigns:
-        session.campaign = campaign
-        pending_deals = Deal.objects.filter(
-            state=ProfileState.PENDING,
-            campaign=campaign,
-        ).select_related("lead").order_by("update_date", "id")
+    # 3. Cancel any legacy per-profile check_pending tasks — superseded by the
+    # bulk sweep_connections sweep.
+    legacy = Task.objects.filter(
+        task_type=Task.TaskType.CHECK_PENDING,
+        status=Task.Status.PENDING,
+    ).update(status=Task.Status.COMPLETED)
+    if legacy:
+        logger.info("Retired %d legacy check_pending tasks", legacy)
 
-        created = 0
-        rescheduled = 0
-        base_time = timezone.now()
-
-        for index, deal in enumerate(pending_deals):
-            public_id = url_to_public_id(deal.lead.linkedin_url) if deal.lead.linkedin_url else None
-            if not public_id:
-                continue
-            target_time = base_time + timedelta(seconds=index * 15)
-            was_created, was_rescheduled = _bring_task_forward(
-                Task.TaskType.CHECK_PENDING,
-                {
-                    "campaign_id": campaign.pk,
-                    "public_id": public_id,
-                    "backoff_hours": cfg["check_pending_recheck_after_hours"],
-                },
-                target_time,
-                dedup_keys=["campaign_id", "public_id"],
-            )
-            created += int(was_created)
-            rescheduled += int(was_rescheduled)
-        if created or rescheduled:
-            logger.info(
-                "[%s] pending catch-up queued: %d created, %d rescheduled",
-                campaign,
-                created,
-                rescheduled,
-            )
+    # Seed / bring forward one sweep_connections task so it runs first on
+    # startup, regardless of whether a future-scheduled sweep is already
+    # pending from a prior run.
+    _bring_task_forward(
+        Task.TaskType.SWEEP_CONNECTIONS,
+        {},
+        timezone.now(),
+        dedup_keys=[],
+    )
 
     # 4. Follow_up tasks for CONNECTED profiles. If the worker was down when a
     # lead accepted, make sure those follow-ups get a prompt retry on startup.
@@ -353,12 +330,17 @@ def run_daemon(session):
                 time.sleep(wait)
             continue
 
-        campaign = Campaign.objects.filter(pk=task.payload.get("campaign_id")).first()
-        if not campaign:
-            task.mark_failed(f"Campaign {task.payload.get('campaign_id')} not found")
-            continue
+        # Account-wide tasks (e.g. sweep_connections) span all campaigns and
+        # don't carry a campaign_id; the handler sets session.campaign as needed.
+        if task.task_type == Task.TaskType.SWEEP_CONNECTIONS:
+            session.campaign = session.campaigns.first()
+        else:
+            campaign = Campaign.objects.filter(pk=task.payload.get("campaign_id")).first()
+            if not campaign:
+                task.mark_failed(f"Campaign {task.payload.get('campaign_id')} not found")
+                continue
+            session.campaign = campaign
 
-        session.campaign = campaign
         task.mark_running()
 
         handler = _HANDLERS.get(task.task_type)

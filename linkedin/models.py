@@ -196,6 +196,7 @@ class Task(models.Model):
         CONNECT = "connect"
         CHECK_PENDING = "check_pending"
         FOLLOW_UP = "follow_up"
+        SWEEP_CONNECTIONS = "sweep_connections"
 
     class Status(models.TextChoices):
         PENDING = "pending"

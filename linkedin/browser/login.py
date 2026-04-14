@@ -98,13 +98,21 @@ def start_browser_session(session: "AccountSession", handle: str):
         _save_cookies(session)
         logger.info(colored("Login successful – session saved", "green", attrs=["bold"]))
     else:
-        goto_page(
-            session,
-            action=lambda: session.page.goto(LINKEDIN_FEED_URL),
-            expected_url_pattern="/feed",
-            timeout=BROWSER_DEFAULT_TIMEOUT_MS,
-            error_message="Saved session invalid",
-        )
+        from urllib.parse import urlparse
+
+        session.page.goto(LINKEDIN_FEED_URL)
+        session.page.wait_for_load_state("load")
+        path = urlparse(session.page.url).path
+        if path.startswith("/uas/login") or path.startswith("/login") or path.startswith("/checkpoint"):
+            logger.warning(
+                "Saved session expired for @%s (landed on %s) — re-authenticating",
+                handle, path,
+            )
+            session.linkedin_profile.cookie_data = None
+            session.linkedin_profile.save(update_fields=["cookie_data"])
+            playwright_login(session)
+            _save_cookies(session)
+            logger.info(colored("Re-login successful – session saved", "green", attrs=["bold"]))
 
     session.page.wait_for_load_state("load")
     logger.info(colored("Browser ready", "green", attrs=["bold"]))
