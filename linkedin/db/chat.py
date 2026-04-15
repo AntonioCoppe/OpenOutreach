@@ -23,5 +23,6 @@ def save_chat_message(session: "AccountSession", public_identifier: str, content
         object_id=lead.pk,
         content=content,
         owner=session.django_user,
+        is_outgoing=True,
     )
     logger.debug("Saved chat message for %s", public_identifier)
