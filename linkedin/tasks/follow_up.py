@@ -13,18 +13,6 @@ from linkedin.models import ActionLog
 logger = logging.getLogger(__name__)
 
 
-def _normalize_message(text: str) -> str:
-    return " ".join(str(text or "").split()).strip().lower()
-
-
-def _matches_campaign_note(message_text: str, connection_note: str) -> bool:
-    note = _normalize_message(connection_note)
-    text = _normalize_message(message_text)
-    if not note or not text:
-        return False
-    return note == text or note in text or text in note
-
-
 def _build_post_accept_message(first_name: str) -> str:
     name = (first_name or "").strip() or "there"
     return POST_ACCEPT_MESSAGE_TEMPLATE.format(first_name=name, video_link=POST_ACCEPT_VIDEO_LINK)
@@ -57,7 +45,7 @@ def _handle_post_accept_video_flow(session, public_id: str, profile: dict, campa
     from linkedin.actions.conversations import get_conversation
     from linkedin.db.deals import set_profile_state
     from linkedin.db.urls import public_id_to_url
-    from linkedin.tasks.connect import build_connection_note, enqueue_follow_up
+    from linkedin.tasks.connect import enqueue_follow_up
 
     deal = (
         Deal.objects.filter(
@@ -70,35 +58,21 @@ def _handle_post_accept_video_flow(session, public_id: str, profile: dict, campa
     if not deal:
         return None
 
-    connection_note = build_connection_note(deal.lead_id)
     messages = get_conversation(session, public_id) or []
-    matched_note_messages = [
-        msg for msg in messages if _matches_campaign_note(msg.get("text", ""), connection_note)
-    ]
 
-    # Existing thread activity after our opener means the prospect already
-    # replied or the thread has been used manually. Stop automation here.
-    if messages and matched_note_messages:
-        other_messages = [
-            msg for msg in messages if not _matches_campaign_note(msg.get("text", ""), connection_note)
-        ]
-        if other_messages:
-            set_profile_state(
-                session,
-                public_id,
-                "Completed",
-                reason="Lead replied or thread already active; automation stopped",
-            )
-            return {"sent_message": False}
+    lead_full_name = f"{deal.lead.first_name or ''} {deal.lead.last_name or ''}".strip().lower()
+    lead_replied = any(
+        (msg.get("sender", "") or "").strip().lower() == lead_full_name
+        for msg in messages
+    )
 
-    # If the thread exists but we cannot match it to our opener, skip it to
-    # avoid sending campaign content into an unrelated manual conversation.
-    if messages and not matched_note_messages:
+    # Prospect replied — stop automation, let the user handle the thread.
+    if lead_replied:
         set_profile_state(
             session,
             public_id,
             "Completed",
-            reason="Conversation not matched to campaign opener; automation skipped",
+            reason="Lead replied; automation stopped",
         )
         return {"sent_message": False}
 

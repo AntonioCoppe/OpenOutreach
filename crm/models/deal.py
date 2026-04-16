@@ -35,6 +35,7 @@ class Deal(models.Model):
         default="",
     )
     reason = models.TextField(blank=True, default="")
+    sent_note = models.TextField(blank=True, default="")
     connect_attempts = models.IntegerField(default=0)
     backoff_hours = models.IntegerField(default=0)
     creation_date = models.DateTimeField(default=timezone.now)

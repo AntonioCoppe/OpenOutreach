@@ -212,6 +212,10 @@ def handle_connect(task, session, qualifiers):
             )
 
             if new_state == ProfileState.PENDING:
+                Deal.objects.filter(
+                    lead__linkedin_url=public_id_to_url(public_id),
+                    campaign=session.campaign,
+                ).update(sent_note=note)
                 enqueue_sweep_connections()
             elif new_state == ProfileState.CONNECTED:
                 enqueue_follow_up(
